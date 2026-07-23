@@ -38,3 +38,15 @@ tests:
       type: one_line
       regex:
         - "Hello, world, from the main binary!"
+  sample.llext.modules.module_build.nofpu:
+    # Reproduces the llext partial link multilib failure on ARMv7-A soft-float
+    # targets (e.g. Cortex-A7/A9 with no FPU) when TOOLCHAIN_LD_FLAGS and
+    # TOOLCHAIN_GROUPED_LD_FLAGS are not propagated to the llext link step.
+    platform_allow:
+      - qemu_cortex_a9
+    extra_conf_files:
+      - llext_mode_m_nofpu.conf
+    harness_config:
+      type: one_line
+      regex:
+        - "Hello, world, from an llext!"

@@ -6190,6 +6190,24 @@ function(add_llext_target target_name)
       ${LLEXT_APPEND_FLAGS}
     )
 
+    # Propagate toolchain linker flags to the llext link step.
+    # TOOLCHAIN_LD_FLAGS (e.g. -fuse-ld=lld or -fuse-ld=eld) and
+    # TOOLCHAIN_GROUPED_LD_FLAGS (e.g. ARM_C_FLAGS: -mcpu, -mabi, -mfpu)
+    # are set in the linker target.cmake and compiler target_<arch>.cmake
+    # files respectively. They are normally distributed via zephyr_interface
+    # link options but are not automatically inherited by this add_executable()
+    # target. Propagating them here ensures the correct linker is used and
+    # the correct multilib is selected for the partial link step, regardless
+    # of which linker or toolchain is configured.
+    if(DEFINED TOOLCHAIN_LD_FLAGS)
+      target_link_options(${llext_lib_target} PRIVATE ${TOOLCHAIN_LD_FLAGS})
+    endif()
+    foreach(_llext_grouped_flags IN LISTS TOOLCHAIN_GROUPED_LD_FLAGS)
+      if(DEFINED ${_llext_grouped_flags})
+        target_link_options(${llext_lib_target} PRIVATE ${${_llext_grouped_flags}})
+      endif()
+    endforeach()
+
   elseif(CONFIG_LLEXT_TYPE_ELF_SHAREDLIB)
 
     # Create a shared library
