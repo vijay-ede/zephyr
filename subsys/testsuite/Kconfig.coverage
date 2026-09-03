@@ -49,7 +49,27 @@ config COVERAGE_GCOV
 	  gen_gcov_files.py which creates the required .gcda files. These
 	  can be read by gcov utility. For more details see gcovr.com .
 
+config COVERAGE_LLVM_SOURCE
+        bool "LLVM source-based coverage for hardware/QEMU targets"
+        depends on !NATIVE_BUILD
+        depends on "$(TOOLCHAIN_VARIANT_COMPILER)" = "llvm"
+        help
+          Build with LLVM source-based coverage instrumentation
+          (-fprofile-instr-generate -fcoverage-mapping) for bare-metal
+          and QEMU targets using the clang/LLVM toolchain.
+          Coverage data is dumped to serial in .profraw format and can
+          be processed with llvm-profdata and llvm-cov on the host.
 endchoice
+
+config LLVM_COVERAGE_PROFILE_BUF_SIZE
+	int "Size of buffer for LLVM profile data dump"
+	depends on COVERAGE_LLVM_SOURCE
+	default 524288
+	help
+	  Size in bytes of the static buffer used to hold the serialized
+	  .profraw data before it is printed to the serial console.
+	  Increase this value if llvm_coverage_dump() reports a buffer
+	  overflow error.
 
 config COVERAGE_GCOV_HEAP_SIZE
 	int "Size of heap allocated for gcov coverage data dump"

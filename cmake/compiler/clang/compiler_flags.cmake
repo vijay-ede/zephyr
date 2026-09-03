@@ -131,7 +131,7 @@ set_property(TARGET compiler-cpp PROPERTY dialect_cpp2b "-std=c++2b" "-Wno-regis
 ###################################################
 
 # clang flags for coverage generation
-if(CONFIG_COVERAGE_NATIVE_SOURCE)
+if(CONFIG_COVERAGE_NATIVE_SOURCE OR CONFIG_COVERAGE_LLVM_SOURCE)
   set_compiler_property(PROPERTY coverage -fprofile-instr-generate -fcoverage-mapping)
 else()
   set_compiler_property(PROPERTY coverage --coverage -fno-inline)

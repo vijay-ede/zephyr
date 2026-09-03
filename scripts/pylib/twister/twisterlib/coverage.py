@@ -21,8 +21,9 @@ import time
 logger = logging.getLogger('twister')
 
 supported_coverage_formats = {
-    "gcovr": ["html", "xml", "csv", "txt", "coveralls", "sonarqube"],
-    "lcov":  ["html", "lcov"]
+    "gcovr":           ["html", "xml", "csv", "txt", "coveralls", "sonarqube"],
+    "lcov":            ["html", "lcov"],
+    "llvm-source-cov": ["html", "lcov", "json"],
 }
 
 
@@ -46,6 +47,8 @@ class CoverageTool:
             t =  Lcov(jobs)
         elif tool == 'gcovr':
             t =  Gcovr()
+        elif tool == 'llvm-source-cov':
+            t =  LlvmSourceCov()
         else:
             logger.error(f"Unsupported coverage tool specified: {tool}")
             return None
@@ -666,6 +669,237 @@ class Gcovr(CoverageTool):
 
         return ret, { 'report': coverage_file, 'ztest': ztest_file, 'summary': coverage_summary }
 
+
+class LlvmSourceCov(CoverageTool):
+    """LLVM source-based coverage tool for bare-metal/QEMU targets.
+
+    Parses LLVM_PROFILE_DUMP_START/END hex dumps from handler.log,
+    reconstructs .profraw binary, merges with llvm-profdata, and
+    generates reports with llvm-cov. Requires CONFIG_COVERAGE_LLVM_SOURCE=y
+    in the firmware build.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.ignores = []
+        self.ignore_branch_patterns = []
+        self.output_formats = "html"
+        self.llvm_cov = None
+        self.llvm_profdata = None
+        self._resolve_tools()
+
+    def _resolve_tools(self):
+        """Resolve llvm-cov and llvm-profdata from LLVM_TOOLCHAIN_PATH or PATH."""
+        llvm_path = os.environ.get("LLVM_TOOLCHAIN_PATH")
+        bin_dir = os.path.join(llvm_path, "bin") if llvm_path else None
+        self.llvm_cov = shutil.which("llvm-cov", path=bin_dir) or shutil.which("llvm-cov")
+        self.llvm_profdata = (shutil.which("llvm-profdata", path=bin_dir)
+                              or shutil.which("llvm-profdata"))
+        if not self.llvm_cov or not self.llvm_profdata:
+            logger.error(
+                "llvm-cov or llvm-profdata not found. "
+                "Set LLVM_TOOLCHAIN_PATH or add them to PATH.")
+
+    def get_version(self):
+        if not self.llvm_cov:
+            return None
+        try:
+            result = subprocess.run(
+                [self.llvm_cov, "--version"],
+                capture_output=True, text=True, check=True)
+            return result.stdout.strip().splitlines()[0]
+        except Exception:
+            return None
+
+    def add_ignore_file(self, pattern):
+        self.ignores.append(f"--ignore-filename-regex={pattern}")
+
+    def add_ignore_directory(self, pattern):
+        # Do not ignore 'samples' or 'tests' directories for llvm-source-cov.
+        # Unlike gcovr which filters the report, llvm-cov --ignore-filename-regex
+        # excludes source files entirely. Since tests and samples ARE the code
+        # under test, excluding them would produce an empty report.
+        # Only ignore generated files (build artifacts).
+        if pattern not in ('samples', 'tests'):
+            self.ignores.append(f"--ignore-filename-regex=.*/{pattern}/.*")
+
+    def add_ignore_branch_pattern(self, pattern):
+        # llvm-cov does not support branch ignore patterns directly
+        self.ignore_branch_patterns.append(pattern)
+
+    @staticmethod
+    def retrieve_profraw_data(input_file):
+        """Parse LLVM_PROFILE_DUMP_START/END markers from handler.log.
+
+        Returns dict with 'complete' bool and 'data' hex string or None.
+        The hex data may span multiple lines (chunked output from firmware
+        to allow readline() to complete within the timeout window).
+        """
+        logger.debug(f"Parsing LLVM profile data from {input_file}")
+        hex_chunks = []
+        capture = False
+        complete = False
+        with open(input_file) as fp:
+            for line in fp.readlines():
+                if "LLVM_PROFILE_DUMP_START" in line:
+                    capture = True
+                    continue
+                if "LLVM_PROFILE_DUMP_END" in line:
+                    complete = True
+                    break
+                if capture:
+                    chunk = line.strip()
+                    if chunk:
+                        hex_chunks.append(chunk)
+        if not complete:
+            logger.warning(f"Incomplete LLVM profile data in {input_file}")
+        hex_data = ''.join(hex_chunks) if hex_chunks else None
+        return {"complete": complete, "data": hex_data}
+
+    def capture_data(self, outdir):
+        """Override: parse .profraw hex from handler.log files,
+        write .profraw binaries, merge with llvm-profdata."""
+        profraw_files = []
+        for handler_log in pathlib.Path(outdir).rglob("handler.log"):
+            result = self.retrieve_profraw_data(handler_log)
+            if not result["complete"] or not result["data"]:
+                logger.warning(f"No usable LLVM profile data in {handler_log}")
+                continue
+            profraw_path = handler_log.parent / "default.profraw"
+            try:
+                with open(profraw_path, 'wb') as f:
+                    f.write(bytes.fromhex(result["data"]))
+                profraw_files.append(str(profraw_path))
+                logger.debug(f"Written: {profraw_path}")
+            except ValueError as e:
+                logger.error(f"Failed to decode hex data from {handler_log}: {e}")
+
+        if not profraw_files:
+            logger.error("No .profraw files generated — no LLVM coverage data found")
+            return
+
+        coverage_dir = pathlib.Path(outdir) / "coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        merged = coverage_dir / "merged.profdata"
+
+        cmd = ([self.llvm_profdata, "merge", "-sparse",
+                "-o", str(merged)] + profraw_files)
+        logger.debug(f"Running: {' '.join(cmd)}")
+        ret = subprocess.call(cmd)
+        if ret:
+            logger.error(f"llvm-profdata merge failed with {ret}")
+        else:
+            logger.debug(f"Merged profdata: {merged}")
+
+    def _generate(self, outdir, coveragelog, build_dirs=None):
+        """Run llvm-cov to generate coverage reports."""
+        coverage_dir = pathlib.Path(outdir) / "coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        profdata = coverage_dir / "merged.profdata"
+
+        # If merged.profdata is not in outdir, collect per-instance profdata
+        # files from build_dirs (or search outdir recursively) and re-merge.
+        if not profdata.exists():
+            search_roots = build_dirs if build_dirs else [outdir]
+            per_instance_profdata = []
+            for d in search_roots:
+                per_instance_profdata.extend(
+                    str(p) for p in pathlib.Path(d).rglob("merged.profdata")
+                    if p != profdata
+                )
+            if not per_instance_profdata:
+                # Also search for raw .profraw files
+                per_instance_profraw = []
+                for d in search_roots:
+                    per_instance_profraw.extend(
+                        str(p) for p in pathlib.Path(d).rglob("default.profraw")
+                    )
+                if per_instance_profraw:
+                    cmd = ([self.llvm_profdata, "merge", "-sparse",
+                            "-o", str(profdata)] + per_instance_profraw)
+                    logger.debug(f"Re-merging profraw files: {' '.join(cmd)}")
+                    subprocess.call(cmd, stdout=coveragelog, stderr=coveragelog)
+            elif len(per_instance_profdata) == 1:
+                # Single instance — just copy
+                import shutil as _shutil
+                _shutil.copy(per_instance_profdata[0], str(profdata))
+            else:
+                # Multiple instances — merge all profdata files
+                cmd = ([self.llvm_profdata, "merge", "-sparse",
+                        "-o", str(profdata)] + per_instance_profdata)
+                logger.debug(f"Re-merging profdata files: {' '.join(cmd)}")
+                subprocess.call(cmd, stdout=coveragelog, stderr=coveragelog)
+
+        if not profdata.exists():
+            logger.error(f"merged.profdata not found at {profdata}")
+            return 1, {}
+
+        # Collect all .a archives from build directories as coverage inputs.
+        # Object archives retain the COMDAT group structure needed by llvm-cov
+        # to map counters to source lines (the final ELF strips this info).
+        search_dirs = build_dirs if build_dirs else [outdir]
+        archives = []
+        for d in search_dirs:
+            archives.extend(str(p) for p in pathlib.Path(d).rglob("*.a"))
+
+        if not archives:
+            logger.error("No .a archives found — cannot generate llvm-cov report")
+            return 1, {}
+
+        # llvm-cov show/export takes the first archive as a positional argument
+        # and additional archives via -object flags.
+        # Passing multiple positional arguments treats them as source file filters.
+        first_archive = archives[0]
+        extra_archives = [f"-object={a}" for a in archives[1:]]
+
+        coverage_dir = pathlib.Path(outdir) / "coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        results = {}
+
+        for fmt in self.output_formats.split(","):
+            fmt = fmt.strip()
+            if fmt == "html":
+                out = coverage_dir / "html"
+                out.mkdir(parents=True, exist_ok=True)
+                cmd = ([self.llvm_cov, "show",
+                        first_archive,
+                        f"--instr-profile={profdata}",
+                        "--format=html",
+                        f"--output-dir={out}",
+                        "--show-line-counts-or-regions"]
+                       + extra_archives + self.ignores)
+                results["html"] = str(out / "index.html")
+            elif fmt == "lcov":
+                out = coverage_dir / "coverage.lcov"
+                cmd = ([self.llvm_cov, "export",
+                        first_archive,
+                        f"--instr-profile={profdata}",
+                        "--format=lcov",
+                        f"--output-file={out}"]
+                       + extra_archives + self.ignores)
+                results["lcov"] = str(out)
+            elif fmt == "json":
+                out = coverage_dir / "coverage.json"
+                cmd = ([self.llvm_cov, "export",
+                        first_archive,
+                        f"--instr-profile={profdata}",
+                        "--format=text",
+                        f"--output-file={out}"]
+                       + extra_archives + self.ignores)
+                results["json"] = str(out)
+            else:
+                logger.warning(f"Unsupported format for llvm-source-cov: {fmt}")
+                continue
+
+            logger.debug(f"Running: {' '.join(cmd)}")
+            ret = subprocess.call(cmd, stdout=coveragelog, stderr=coveragelog)
+            if ret:
+                logger.error(f"llvm-cov {fmt} report failed with {ret}")
+            else:
+                logger.info(f"LLVM coverage {fmt} report: {results.get(fmt, '')}")
+
+        return 0, results
+
 def sanitize_coverage_name(name):
     """Make a coverage test name safe to use as a filename component."""
     return re.sub(r"[^A-Za-z0-9_.]", "_", name)
@@ -1130,8 +1364,10 @@ def run_coverage_tool(options, outdir, is_system_gcov, instances,
     if not coverage_tool:
         return False, {}
 
-    coverage_tool.gcov_tool = str(choose_gcov_tool(options, is_system_gcov, instances))
-    logger.debug(f"Using gcov tool: {coverage_tool.gcov_tool}")
+    coverage_tool.gcov_tool = str(choose_gcov_tool(options, is_system_gcov, instances)) \
+        if options.coverage_tool != 'llvm-source-cov' else None
+    if coverage_tool.gcov_tool:
+        logger.debug(f"Using gcov tool: {coverage_tool.gcov_tool}")
 
     coverage_tool.instances = instances
     coverage_tool.coverage_per_instance = options.coverage_per_instance
