@@ -51,6 +51,8 @@ class HarnessException(Exception):
 class Harness:
     GCOV_START = "GCOV_COVERAGE_DUMP_START"
     GCOV_END = "GCOV_COVERAGE_DUMP_END"
+    LLVM_PROFILE_START = "LLVM_PROFILE_DUMP_START"
+    LLVM_PROFILE_END = "LLVM_PROFILE_DUMP_END"
     FAULT = "ZEPHYR FATAL ERROR"
     RUN_PASSED = "PROJECT EXECUTION SUCCESSFUL"
     RUN_FAILED = "PROJECT EXECUTION FAILED"
@@ -212,6 +214,10 @@ class Harness:
             self.capture_coverage = True
         elif self.GCOV_END in line:
             self.capture_coverage = False
+        elif self.LLVM_PROFILE_START in line:
+            self.capture_coverage = True
+        elif self.LLVM_PROFILE_END in line:
+            self.capture_coverage = False
 
 
 class Robot(Harness):
@@ -368,6 +374,11 @@ class Console(Harness):
                 self.status = TwisterStatus.PASS
         else:
             logger.error("Unknown harness_config type")
+
+        if self.LLVM_PROFILE_START in line:
+            self.capture_coverage = True
+        elif self.LLVM_PROFILE_END in line:
+            self.capture_coverage = False
 
         self.process_test(line)
         # Reset the resulting test state to FAIL when not all of the patterns were

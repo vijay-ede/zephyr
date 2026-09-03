@@ -4,6 +4,7 @@
 # Copyright (c) 2018-2022 Intel Corporation
 # Copyright 2022 NXP
 # Copyright (c) 2024 Arm Limited (or its affiliates). All rights reserved.
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
 #
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
@@ -283,16 +284,20 @@ class BinaryHandler(Handler):
                     log_out_fp.write(strip_ansi_sequences(line_decoded))
                     log_out_fp.flush()
                     harness.handle(stripped_line)
-                    if (
+                    if harness.capture_coverage:
+                        # Coverage dump in progress - always extend timeout.
+                        # With chunked output (4096 bytes/chunk), each chunk
+                        # takes ~0.1s at QEMU icount speed. 30s is 300x the
+                        # actual chunk time, providing ample margin.
+                        # GCC+gcov also uses this path for its serial dump.
+                        timeout_time = time.time() + 30
+                        timeout_extended = True
+                    elif (
                         harness.status != TwisterStatus.NONE
                         and not timeout_extended
-                        or harness.capture_coverage
                     ):
                         timeout_extended = True
-                        if harness.capture_coverage:
-                            timeout_time = time.time() + 30
-                        else:
-                            timeout_time = time.time() + 2
+                        timeout_time = time.time() + 2
                 else:
                     reader_t.join(0)
                     break

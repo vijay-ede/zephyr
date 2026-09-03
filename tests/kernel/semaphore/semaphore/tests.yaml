@@ -4,3 +4,14 @@ tests:
       - kernel
       - userspace
     ignore_faults: true
+  kernel.semaphore.llvm_coverage:
+    tags:
+      - kernel
+      - userspace
+      - coverage
+    ignore_faults: true
+    extra_args:
+      - CONFIG_COVERAGE=y
+      - CONFIG_COVERAGE_LLVM_SOURCE=y
+    integration_toolchains:
+      - host/llvm
