@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024 Qualcomm Innovation Center, Inc.
+
 # First step is to inherit all properties from gcc, as clang is compatible with most flags.
 include(${ZEPHYR_BASE}/cmake/compiler/gcc/compiler_flags.cmake)
 
@@ -131,7 +134,7 @@ set_property(TARGET compiler-cpp PROPERTY dialect_cpp2b "-std=c++2b" "-Wno-regis
 ###################################################
 
 # clang flags for coverage generation
-if(CONFIG_COVERAGE_NATIVE_SOURCE)
+if(CONFIG_COVERAGE_NATIVE_SOURCE OR CONFIG_COVERAGE_LLVM_SOURCE)
   set_compiler_property(PROPERTY coverage -fprofile-instr-generate -fcoverage-mapping)
 else()
   set_compiler_property(PROPERTY coverage --coverage -fno-inline)
