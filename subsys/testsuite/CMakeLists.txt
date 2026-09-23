@@ -1,5 +1,6 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+#
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc.
 
 add_subdirectory_ifdef(CONFIG_ZTEST ztest)
 

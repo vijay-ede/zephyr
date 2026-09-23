@@ -1,0 +1,2 @@
+# Load Sysbuild board Kconfig descriptions.
+osource "/local/mnt/workspace/vede/zephyr/zephyr-fork/zephyr/boards/qemu/riscv32/Kconfig.sysbuild"

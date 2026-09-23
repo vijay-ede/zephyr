@@ -276,7 +276,8 @@ class TestPlan:
             self.options.enable_ubsan,
             self.options.enable_coverage,
             self.options.coverage_platform,
-            self.options.coverage_per_test
+            self.options.coverage_per_test,
+            self.options.coverage_tool
         )
 
     def load(self):
