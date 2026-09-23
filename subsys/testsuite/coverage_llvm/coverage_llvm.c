@@ -46,9 +46,20 @@ extern int __llvm_profile_write_buffer(char *Buffer);
 /*
  * Static buffer for the .profraw data.
  * Size is controlled by CONFIG_LLVM_COVERAGE_PROFILE_BUF_SIZE.
- * The buffer is placed in BSS (zero-initialized, writable RAM).
+ *
+ * When CONFIG_USERSPACE is enabled, the buffer is placed in the z_malloc
+ * partition of app_shmem (user-accessible shared memory) so that user-mode
+ * code can update coverage counters without triggering PMP/MPU access faults.
+ *
+ * When CONFIG_USERSPACE is disabled, the buffer is placed in BSS
+ * (zero-initialized, writable kernel RAM).
  */
+#ifdef CONFIG_USERSPACE
+static char llvm_profile_buf[CONFIG_LLVM_COVERAGE_PROFILE_BUF_SIZE]
+	__attribute__((section("data_smem_z_malloc_partition_bss")));
+#else
 static char llvm_profile_buf[CONFIG_LLVM_COVERAGE_PROFILE_BUF_SIZE];
+#endif
 
 /**
  * @brief Dump LLVM coverage profile data to the serial console.

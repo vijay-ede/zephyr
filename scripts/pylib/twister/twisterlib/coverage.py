@@ -1,7 +1,6 @@
-# vim: set syntax=python ts=4 :
-#
 # Copyright (c) 2018-2025 Intel Corporation
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+#
 # SPDX-License-Identifier: Apache-2.0
 
 import collections

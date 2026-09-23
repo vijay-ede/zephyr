@@ -78,11 +78,12 @@ endif()
 
 # Inject linker section fragments.
 #
-# RAM_SECTIONS: __llvm_prf_cnts, __llvm_prf_bitmap
-#   → NOLOAD in RAMABLE_REGION (writable RAM, accessible before PMP setup)
-#
-# DATA_SECTIONS: __llvm_prf_data
-#   → initialized DATA in RAMABLE_REGION (within __data_region_start/end)
+# DATA_SECTIONS: __llvm_prf_cnts, __llvm_prf_bitmap, __llvm_prf_data
+#   → placed after initialized data sections to ensure they're in the second
+#     LOAD segment (RAM segment), not the first LOAD segment (ROM segment).
+#     This is critical for non-XIP systems where ROMABLE_REGION == RAMABLE_REGION.
+#     Without this, __llvm_prf_cnts ends up in the first LOAD segment which is
+#     treated as read-only by the linker, causing Store/AMO access faults.
 #
 # ROM_SECTIONS: __llvm_prf_names
 #   → dedicated output section in ROMABLE_REGION (generates boundary symbols)
@@ -90,12 +91,22 @@ endif()
 # SECTIONS: __llvm_covmap, __llvm_covfun
 #   → non-allocatable, address 0, outside all memory GROUPs
 #   → retained in ELF for llvm-cov host tool (same pattern as .debug_info)
+#
+# APP_SHMEM: .app_shmem_llvm_profile_buf (when CONFIG_USERSPACE enabled)
+#   → user-accessible shared memory for coverage buffer
+#   → allows user-mode code to update coverage counters without PMP faults
 if(CONFIG_DEMAND_PAGING)
-  zephyr_linker_sources(PINNED_RAM_SECTIONS coverage_llvm_ram.ld)
+  zephyr_linker_sources(PINNED_DATA_SECTIONS coverage_llvm_ram.ld)
   zephyr_linker_sources(PINNED_RODATA coverage_llvm_rodata.ld)
 else()
-  zephyr_linker_sources(RAM_SECTIONS coverage_llvm_ram.ld)
+  zephyr_linker_sources(DATA_SECTIONS coverage_llvm_ram.ld)
   zephyr_linker_sources(DATA_SECTIONS coverage_llvm_data.ld)
   zephyr_linker_sources(ROM_SECTIONS coverage_llvm_rodata.ld)
   zephyr_linker_sources(SECTIONS coverage_llvm_sections.ld)
+endif()
+
+# When CONFIG_USERSPACE is enabled, place the coverage buffer in app_shmem
+# (user-accessible shared memory) so user-mode code can update counters.
+if(CONFIG_USERSPACE)
+  zephyr_linker_sources(RWDATA coverage_llvm_app_shmem.ld)
 endif()

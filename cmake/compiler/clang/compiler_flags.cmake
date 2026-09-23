@@ -1,5 +1,6 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+#
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc.
 
 # First step is to inherit all properties from gcc, as clang is compatible with most flags.
 include(${ZEPHYR_BASE}/cmake/compiler/gcc/compiler_flags.cmake)

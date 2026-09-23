@@ -26,7 +26,7 @@ SECTION_PROLOGUE(__llvm_prf_cnts, (NOLOAD),)
 	KEEP(*("__llvm_prf_cnts.*"))
 	. = ALIGN(8);
 	__llvm_prf_cnts_end = .;
-} GROUP_NOLOAD_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
+} > RAMABLE_REGION AT > RAMABLE_REGION
 
 SECTION_PROLOGUE(__llvm_prf_bitmap, (NOLOAD),)
 {
@@ -36,4 +36,4 @@ SECTION_PROLOGUE(__llvm_prf_bitmap, (NOLOAD),)
 	KEEP(*("__llvm_prf_bitmap.*"))
 	. = ALIGN(8);
 	__llvm_prf_bitmap_end = .;
-} GROUP_NOLOAD_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
+} > RAMABLE_REGION AT > RAMABLE_REGION
