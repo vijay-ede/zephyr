@@ -394,6 +394,7 @@ config NOINIT_SNIPPET_FIRST
 config PRIVILEGED_STACK_SIZE
 	int "Size of privileged stack"
 	default 2048 if EMUL
+	default 8192 if COVERAGE_LLVM_SOURCE
 	default 1024
 	depends on USERSPACE
 	help
@@ -402,6 +403,10 @@ config PRIVILEGED_STACK_SIZE
 	  this region will be inaccessible from user mode.  During system calls,
 	  this region will be utilized by the system call. This value must be
 	  a multiple of the minimum stack alignment.
+	  When LLVM source-based coverage is enabled, instrumentation adds
+	  significant overhead to kernel functions (e.g. compute_stack_geometry
+	  allocates 1648 bytes on the privileged stack), requiring a larger
+	  privileged stack to avoid overflow during syscalls from user mode.
 
 config KOBJECT_TEXT_AREA
 	int "Size of kobject text area"

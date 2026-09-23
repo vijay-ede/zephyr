@@ -71,12 +71,13 @@ endchoice
 config LLVM_COVERAGE_PROFILE_BUF_SIZE
 	int "Size of buffer for LLVM profile data dump"
 	depends on COVERAGE_LLVM_SOURCE
-	default 524288
+	default 1048576
 	help
 	  Size in bytes of the static buffer used to hold the serialized
 	  .profraw data before it is printed to the serial console.
 	  Increase this value if llvm_coverage_dump() reports a buffer
-	  overflow error.
+	  overflow error. The required size depends on the number of
+	  instrumented functions; larger test suites need larger buffers.
 
 config COVERAGE_GCOV_HEAP_SIZE
 	int "Size of heap allocated for gcov coverage data dump"

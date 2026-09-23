@@ -1,2 +1,0 @@
-qemu-system-riscv32: warning: No satp mode set. Defaulting to 'bare'
-qemu-system-riscv32: terminating on signal 15 from pid 2919292 (python3)

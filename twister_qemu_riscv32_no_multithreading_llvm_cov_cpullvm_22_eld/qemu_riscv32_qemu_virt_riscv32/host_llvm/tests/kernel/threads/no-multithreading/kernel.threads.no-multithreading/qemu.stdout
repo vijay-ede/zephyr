@@ -1,2 +1,0 @@
-ninja: Entering directory `/local/mnt/workspace/vede/zephyr/zephyr-fork/zephyr/twister_qemu_riscv32_no_multithreading_llvm_cov_cpullvm_22_eld/qemu_riscv32_qemu_virt_riscv32/host_llvm/tests/kernel/threads/no-multithreading/kernel.threads.no-multithreading'
-[0/1] [QEMU] CPU: rv32i,i=on,m=on,a=on,f=on,d=on,c=on,zicsr=on,zifencei=on,pmp=on,u=on

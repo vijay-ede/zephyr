@@ -1,8 +1,0 @@
-<testsuites>
-	<testsuite name="qemu_riscv32/qemu_virt_riscv32" timestamp="2026-09-17T23:19:40.663642" time="25.2" tests="1" failures="0" errors="0" skipped="0">
-		<properties>
-			<property name="version" value="890ea14a7d20" />
-		</properties>
-		<testcase classname="qemu_riscv32/qemu_virt_riscv32:kernel.threads.no-multithreading" name="kernel.threads.no-multithreading" time="25.20" />
-	</testsuite>
-</testsuites>

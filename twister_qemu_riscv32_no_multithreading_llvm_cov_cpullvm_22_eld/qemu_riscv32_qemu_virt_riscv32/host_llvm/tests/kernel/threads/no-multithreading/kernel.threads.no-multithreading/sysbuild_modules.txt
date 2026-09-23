@@ -1,1 +1,0 @@
-"mcuboot":"/local/mnt/workspace/vede/zephyr/zephyr-fork/bootloader/mcuboot":"/local/mnt/workspace/vede/zephyr/zephyr-fork/bootloader/mcuboot/boot/zephyr/sysbuild"
