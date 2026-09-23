@@ -28,6 +28,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <stdint.h>
+#ifdef CONFIG_USERSPACE
+#include <zephyr/app_memory/app_memdomain.h>
+#endif
 
 /*
  * Defining __llvm_profile_runtime suppresses the automatic atexit()
@@ -47,19 +50,65 @@ extern int __llvm_profile_write_buffer(char *Buffer);
  * Static buffer for the .profraw data.
  * Size is controlled by CONFIG_LLVM_COVERAGE_PROFILE_BUF_SIZE.
  *
- * When CONFIG_USERSPACE is enabled, the buffer is placed in the z_malloc
- * partition of app_shmem (user-accessible shared memory) so that user-mode
- * code can update coverage counters without triggering PMP/MPU access faults.
- *
- * When CONFIG_USERSPACE is disabled, the buffer is placed in BSS
- * (zero-initialized, writable kernel RAM).
+ * This buffer is only written from kernel context (llvm_coverage_dump() is
+ * called from kernel/init.c after all tests complete), so it does not need
+ * to be in user-accessible memory. Regular BSS (kernel-only RAM) is fine.
  */
-#ifdef CONFIG_USERSPACE
-static char llvm_profile_buf[CONFIG_LLVM_COVERAGE_PROFILE_BUF_SIZE]
-	__attribute__((section("data_smem_z_malloc_partition_bss")));
-#else
 static char llvm_profile_buf[CONFIG_LLVM_COVERAGE_PROFILE_BUF_SIZE];
-#endif
+
+#ifdef CONFIG_USERSPACE
+/*
+ * When CONFIG_USERSPACE is enabled, user-mode threads need read/write access
+ * to LLVM coverage sections:
+ *   - __llvm_prf_data: function metadata structs (read by instrumentation)
+ *   - __llvm_prf_cnts: coverage counters (written by instrumentation)
+ *   - __llvm_prf_bitmap: MC/DC bitmap (written by instrumentation)
+ *
+ * These sections are placed in RAM by the linker script, but the RISC-V PMP
+ * restricts user-mode access to only explicitly granted regions.
+ *
+ * We register a k_mem_partition covering all three sections and add it to the
+ * default memory domain so all user threads can update coverage counters.
+ *
+ * The linker scripts export the boundary symbols used below.
+ */
+extern char __llvm_prf_data_start[];
+extern char __llvm_prf_data_end[];
+extern char __llvm_prf_cnts_start[];
+extern char __llvm_prf_cnts_end[];
+extern char __llvm_prf_bitmap_start[];
+extern char __llvm_prf_bitmap_end[];
+
+static struct k_mem_partition llvm_prf_partition;
+
+static int llvm_coverage_add_partition(void)
+{
+	/* Cover from __llvm_prf_data_start to __llvm_prf_cnts_end
+	 * (and __llvm_prf_bitmap_end if present) as one contiguous region.
+	 */
+	uintptr_t start = (uintptr_t)__llvm_prf_data_start;
+	uintptr_t end = (uintptr_t)__llvm_prf_cnts_end;
+
+	if ((uintptr_t)__llvm_prf_bitmap_end > end) {
+		end = (uintptr_t)__llvm_prf_bitmap_end;
+	}
+
+	size_t size = end - start;
+
+	if (size == 0) {
+		return 0;
+	}
+
+	llvm_prf_partition.start = start;
+	llvm_prf_partition.size = size;
+	llvm_prf_partition.attr = K_MEM_PARTITION_P_RW_U_RW;
+
+	return k_mem_domain_add_partition(&k_mem_domain_default,
+					  &llvm_prf_partition);
+}
+
+SYS_INIT(llvm_coverage_add_partition, PRE_KERNEL_1, 0);
+#endif /* CONFIG_USERSPACE */
 
 /**
  * @brief Dump LLVM coverage profile data to the serial console.

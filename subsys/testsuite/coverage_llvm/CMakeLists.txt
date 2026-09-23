@@ -92,9 +92,11 @@ endif()
 #   → non-allocatable, address 0, outside all memory GROUPs
 #   → retained in ELF for llvm-cov host tool (same pattern as .debug_info)
 #
-# APP_SHMEM: .app_shmem_llvm_profile_buf (when CONFIG_USERSPACE enabled)
-#   → user-accessible shared memory for coverage buffer
-#   → allows user-mode code to update coverage counters without PMP faults
+# When CONFIG_USERSPACE is enabled, coverage_llvm.c registers a
+# k_mem_partition covering __llvm_prf_cnts and __llvm_prf_bitmap and adds it
+# to the default memory domain via SYS_INIT(PRE_KERNEL_1). This grants
+# user-mode threads write access to the coverage counters without requiring
+# any linker script changes.
 if(CONFIG_DEMAND_PAGING)
   zephyr_linker_sources(PINNED_DATA_SECTIONS coverage_llvm_ram.ld)
   zephyr_linker_sources(PINNED_RODATA coverage_llvm_rodata.ld)
@@ -103,10 +105,4 @@ else()
   zephyr_linker_sources(DATA_SECTIONS coverage_llvm_data.ld)
   zephyr_linker_sources(ROM_SECTIONS coverage_llvm_rodata.ld)
   zephyr_linker_sources(SECTIONS coverage_llvm_sections.ld)
-endif()
-
-# When CONFIG_USERSPACE is enabled, place the coverage buffer in app_shmem
-# (user-accessible shared memory) so user-mode code can update counters.
-if(CONFIG_USERSPACE)
-  zephyr_linker_sources(RWDATA coverage_llvm_app_shmem.ld)
 endif()

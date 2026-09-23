@@ -140,6 +140,7 @@ config SCHED_DEADLINE
 
 config MAIN_STACK_SIZE
 	int "Size of stack for initialization and main thread"
+	default 4096 if COVERAGE_LLVM_SOURCE
 	default 2048 if COVERAGE_GCOV
 	default 512 if ZTEST && !(RISCV || X86 || ARM || ARC || OPENRISC)
 	default 1024
@@ -152,6 +153,7 @@ config MAIN_STACK_SIZE
 
 config IDLE_STACK_SIZE
 	int "Size of stack for idle thread"
+	default 2048 if COVERAGE_LLVM_SOURCE
 	default 2048 if COVERAGE_GCOV
 	default 1024 if XTENSA
 	default 512 if RISCV
@@ -166,10 +168,14 @@ config IDLE_STACK_SIZE
 
 config ISR_STACK_SIZE
 	int "ISR and initialization stack size (in bytes)"
+	default 4096 if COVERAGE_LLVM_SOURCE
 	default 2048
 	help
 	  This option specifies the size of the stack used by interrupt
 	  service routines (ISRs), and during kernel initialization.
+	  When LLVM source-based coverage is enabled, the instrumentation
+	  adds overhead to every function call, increasing stack usage.
+	  A larger default is used to prevent ISR stack overflow.
 
 config THREAD_STACK_INFO
 	bool "Thread stack info"
