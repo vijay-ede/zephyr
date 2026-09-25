@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (c) 2024 Qualcomm Innovation Center, Inc.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 """
 Parse a serial console log file and reconstruct the .profraw binary file
 produced by LLVM source-based coverage instrumentation.
