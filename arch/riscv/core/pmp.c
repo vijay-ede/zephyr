@@ -60,6 +60,12 @@ LOG_MODULE_REGISTER(mpu);
 
 #define PMP_PERM_MASK (PMP_R | PMP_W | PMP_X)
 
+#if defined(CONFIG_COVERAGE_LLVM_SOURCE) && defined(CONFIG_USERSPACE)
+extern char __llvm_prf_data_start[];
+extern char __llvm_prf_cnts_end[];
+extern char __llvm_prf_bitmap_end[];
+#endif
+
 #ifdef CONFIG_PMP_DATA_EXECUTION_PREVENTION
 /*
  * To prevent data execution for kernel threads, we need to reserve the last
@@ -683,6 +689,31 @@ void z_riscv_pmp_init(void)
 		      (size_t)__rom_region_size,
 		      pmp_addr, pmp_cfg, ARRAY_SIZE(pmp_addr));
 
+#if defined(CONFIG_COVERAGE_LLVM_SOURCE) && defined(CONFIG_USERSPACE)
+	/*
+	 * LLVM source coverage updates profile counters from instrumented code,
+	 * including code running in user mode and in custom memory domains. Make
+	 * the profile data a global user-readable/writable region instead of a
+	 * partition belonging only to the default memory domain.
+	 */
+	uintptr_t coverage_start = (uintptr_t)__llvm_prf_data_start;
+	uintptr_t coverage_end = (uintptr_t)__llvm_prf_cnts_end;
+
+	if ((uintptr_t)__llvm_prf_bitmap_end > coverage_end) {
+		coverage_end = (uintptr_t)__llvm_prf_bitmap_end;
+	}
+
+	if (coverage_end > coverage_start) {
+		bool coverage_pmp_ok = set_pmp_entry(&index, PMP_R | PMP_W,
+						     coverage_start,
+						     coverage_end - coverage_start,
+						     pmp_addr, pmp_cfg,
+						     PMP_USABLE_SLOTS);
+
+		__ASSERT(coverage_pmp_ok, "No PMP slot available for LLVM coverage");
+	}
+#endif /* CONFIG_COVERAGE_LLVM_SOURCE && CONFIG_USERSPACE */
+
 	/* SoC-specific PMP regions defined via iterable sections */
 	STRUCT_SECTION_FOREACH(pmp_soc_region, region) {
 		uintptr_t start = (uintptr_t)region->start;
@@ -1189,6 +1220,11 @@ int arch_mem_domain_max_partitions_get(void)
 
 	/* remove those slots dedicated to global entries */
 	available_pmp_slots -= global_pmp_end_index[U_MODE];
+
+#if defined(CONFIG_COVERAGE_LLVM_SOURCE) && defined(CONFIG_USERSPACE)
+	/* The LLVM coverage region is a global PMP entry. */
+	available_pmp_slots--;
+#endif /* CONFIG_COVERAGE_LLVM_SOURCE && CONFIG_USERSPACE */
 
 	/*
 	 * User thread stack mapping:
