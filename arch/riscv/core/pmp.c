@@ -1220,12 +1220,6 @@ int arch_mem_domain_max_partitions_get(void)
 
 	/* remove those slots dedicated to global entries */
 	available_pmp_slots -= global_pmp_end_index[U_MODE];
-
-#if defined(CONFIG_COVERAGE_LLVM_SOURCE) && defined(CONFIG_USERSPACE)
-	/* The LLVM coverage region is a global PMP entry. */
-	available_pmp_slots--;
-#endif /* CONFIG_COVERAGE_LLVM_SOURCE && CONFIG_USERSPACE */
-
 	/*
 	 * User thread stack mapping:
 	 * 1 slot if CONFIG_MPU_REQUIRES_POWER_OF_TWO_ALIGNMENT=y,

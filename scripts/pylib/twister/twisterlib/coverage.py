@@ -54,6 +54,10 @@ class CoverageTool:
         logger.debug(f"Select {tool} as the coverage tool...")
         return t
 
+    def add_ignore_branch_pattern(self, pattern):
+        """Optionally configure backend-specific branch filtering."""
+        return
+
     @staticmethod
     def retrieve_gcov_data(input_file):
         logger.debug(f"Working on {input_file}")
@@ -208,7 +212,10 @@ class CoverageTool:
                     ),
                     "sonarqube": "Sonarqube report generated: {}".format(
                         os.path.join(outdir, "coverage", "coverage.sonarqube.xml")
-                    )
+                    ),
+                    "json": "JSON report generated: {}".format(
+                        os.path.join(outdir, "coverage", "coverage.json")
+                    ),
                 }
                 # Per-instance reports are generated one per test instance and
                 # would flood the console, so log them at debug level and keep
@@ -216,7 +223,12 @@ class CoverageTool:
                 per_instance_report = self.coverage_capture and self.coverage_per_instance
                 log = logger.debug if per_instance_report else logger.info
                 for r in self.output_formats.split(','):
-                    log(report_log[r])
+                    r = r.strip()
+                    report_path = reports.get(r)
+                    if report_path:
+                        log(f"{r.upper()} report generated: {report_path}")
+                    else:
+                        log(report_log[r])
             else:
                 coverage_completed = False
         gcov_process_duration = time.time() - gcov_process_start
@@ -680,7 +692,6 @@ class LlvmSourceCov(CoverageTool):
     def __init__(self):
         super().__init__()
         self.ignores = []
-        self.ignore_branch_patterns = []
         self.output_formats = "html"
         self.llvm_cov = None
         self.llvm_profdata = None
@@ -720,10 +731,6 @@ class LlvmSourceCov(CoverageTool):
         # Only ignore generated files (build artifacts).
         if pattern not in ('samples', 'tests'):
             self.ignores.append(f"--ignore-filename-regex=.*/{pattern}/.*")
-
-    def add_ignore_branch_pattern(self, pattern):
-        # llvm-cov does not support branch ignore patterns directly
-        self.ignore_branch_patterns.append(pattern)
 
     @staticmethod
     def retrieve_profraw_data(input_file):
@@ -1379,10 +1386,10 @@ def run_coverage_tool(options, outdir, is_system_gcov, instances,
     coverage_tool.add_ignore_file('generated')
     coverage_tool.add_ignore_directory('tests')
     coverage_tool.add_ignore_directory('samples')
-    # Ignore branch coverage on LOG_* and LOG_HEXDUMP_* macros
+    # Backends that support branch filtering ignore LOG_* and LOG_HEXDUMP_* macros.
     # Branch misses are due to the implementation of Z_LOG2 and cannot be avoided
     coverage_tool.add_ignore_branch_pattern(r"^\s*LOG_(?:HEXDUMP_)?(?:DBG|INF|WRN|ERR)\(.*")
-    # Ignore branch coverage on __ASSERT* macros
+    # Backends that support branch filtering also ignore __ASSERT* macros.
     # Covering the failing case is not desirable as it will immediately terminate the test.
     coverage_tool.add_ignore_branch_pattern(r"^\s*__ASSERT(?:_EVAL|_NO_MSG|_POST_ACTION)?\(.*")
     return coverage_tool.generate(outdir)

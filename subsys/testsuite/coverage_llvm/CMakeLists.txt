@@ -36,11 +36,6 @@ zephyr_sources(coverage_llvm.c)
 #   → non-allocatable, address 0, outside all memory GROUPs
 #   → retained in ELF for llvm-cov host tool (same pattern as .debug_info)
 #
-# When CONFIG_USERSPACE is enabled, coverage_llvm.c registers a
-# k_mem_partition covering __llvm_prf_cnts and __llvm_prf_bitmap and adds it
-# to the default memory domain via SYS_INIT(PRE_KERNEL_1). This grants
-# user-mode threads write access to the coverage counters without requiring
-# any linker script changes.
 zephyr_linker_sources(DATA_SECTIONS coverage_llvm_ram.ld)
 zephyr_linker_sources(DATA_SECTIONS coverage_llvm_data.ld)
 zephyr_linker_sources(ROM_SECTIONS coverage_llvm_rodata.ld)
