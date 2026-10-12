@@ -20,62 +20,6 @@
 
 zephyr_sources(coverage_llvm.c)
 
-# Force the __llvm_profile_* symbols into the link so that the linker
-# does not discard the profile sections as unreferenced.
-zephyr_link_libraries(
-  -Wl,-u,__llvm_profile_get_size_for_buffer
-  -Wl,-u,__llvm_profile_write_buffer
-)
-
-# Locate the bare-metal libclang_rt.profile.a.
-#
-# Strategy: ask the compiler for the path to libclang_rt.builtins.a
-# (which it always knows), then substitute "builtins" with "profile".
-# This correctly handles all multilib variants (rv32imac, rv32imafc, etc.)
-# without hard-coding the path.
-#
-# We pass the target triple and arch/ABI flags so the compiler selects
-# the correct multilib directory.
-set(_clang_rt_extra_flags "")
-if(CMAKE_C_COMPILER_TARGET)
-  list(APPEND _clang_rt_extra_flags "--target=${CMAKE_C_COMPILER_TARGET}")
-endif()
-if(DEFINED riscv_march)
-  list(APPEND _clang_rt_extra_flags "-march=${riscv_march}")
-endif()
-if(DEFINED riscv_mabi)
-  list(APPEND _clang_rt_extra_flags "-mabi=${riscv_mabi}")
-endif()
-
-execute_process(
-  COMMAND ${CMAKE_C_COMPILER}
-    ${_clang_rt_extra_flags}
-    --rtlib=compiler-rt
-    -print-libgcc-file-name
-  OUTPUT_VARIABLE _clang_rt_builtins_path
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  ERROR_QUIET
-)
-
-if(_clang_rt_builtins_path)
-  string(REPLACE "libclang_rt.builtins" "libclang_rt.profile"
-         _clang_rt_profile_path "${_clang_rt_builtins_path}")
-
-  if(EXISTS "${_clang_rt_profile_path}")
-    zephyr_link_libraries("${_clang_rt_profile_path}")
-    message(STATUS "LLVM coverage: using ${_clang_rt_profile_path}")
-  else()
-    message(WARNING
-      "LLVM coverage: libclang_rt.profile.a not found at "
-      "${_clang_rt_profile_path}. "
-      "Set EXTRA_LDFLAGS to add it manually.")
-  endif()
-else()
-  message(WARNING
-    "LLVM coverage: could not determine libclang_rt.builtins.a path. "
-    "Set EXTRA_LDFLAGS to add libclang_rt.profile.a manually.")
-endif()
-
 # Inject linker section fragments.
 #
 # DATA_SECTIONS: __llvm_prf_cnts, __llvm_prf_bitmap, __llvm_prf_data
@@ -97,12 +41,7 @@ endif()
 # to the default memory domain via SYS_INIT(PRE_KERNEL_1). This grants
 # user-mode threads write access to the coverage counters without requiring
 # any linker script changes.
-if(CONFIG_DEMAND_PAGING)
-  zephyr_linker_sources(PINNED_DATA_SECTIONS coverage_llvm_ram.ld)
-  zephyr_linker_sources(PINNED_RODATA coverage_llvm_rodata.ld)
-else()
-  zephyr_linker_sources(DATA_SECTIONS coverage_llvm_ram.ld)
-  zephyr_linker_sources(DATA_SECTIONS coverage_llvm_data.ld)
-  zephyr_linker_sources(ROM_SECTIONS coverage_llvm_rodata.ld)
-  zephyr_linker_sources(SECTIONS coverage_llvm_sections.ld)
-endif()
+zephyr_linker_sources(DATA_SECTIONS coverage_llvm_ram.ld)
+zephyr_linker_sources(DATA_SECTIONS coverage_llvm_data.ld)
+zephyr_linker_sources(ROM_SECTIONS coverage_llvm_rodata.ld)
+zephyr_linker_sources(SECTIONS coverage_llvm_sections.ld)

@@ -4,7 +4,6 @@
 # Copyright (c) 2018-2025 Intel Corporation
 # Copyright 2022 NXP
 # Copyright (c) 2024 Arm Limited (or its affiliates). All rights reserved.
-# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: Apache-2.0
 

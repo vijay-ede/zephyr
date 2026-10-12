@@ -1,13 +1,7 @@
-# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
-#
-# SPDX-License-Identifier: Apache-2.0
-
 # The coverage linker flag is specific for clang.
 if(CONFIG_COVERAGE_NATIVE_GCOV)
   set_property(TARGET linker PROPERTY coverage --coverage)
-elseif(CONFIG_COVERAGE_NATIVE_SOURCE)
-  set_property(TARGET linker PROPERTY coverage -fprofile-instr-generate -fcoverage-mapping)
-elseif(CONFIG_COVERAGE_LLVM_SOURCE)
+elseif(CONFIG_COVERAGE_NATIVE_SOURCE OR CONFIG_COVERAGE_LLVM_SOURCE)
   set_property(TARGET linker PROPERTY coverage -fprofile-instr-generate -fcoverage-mapping)
 endif()
 

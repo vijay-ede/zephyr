@@ -1,6 +1,4 @@
 # Copyright (c) 2018-2025 Intel Corporation
-# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
-#
 # SPDX-License-Identifier: Apache-2.0
 
 import collections

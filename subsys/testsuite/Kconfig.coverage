@@ -1,7 +1,6 @@
-# Copyright The Zephyr Project Contributors
-# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
-#
 # SPDX-License-Identifier: Apache-2.0
+# Copyright The Zephyr Project Contributors
+#
 menu "Coverage"
 
 config HAS_COVERAGE_SUPPORT
@@ -53,18 +52,14 @@ config COVERAGE_GCOV
 config COVERAGE_LLVM_SOURCE
         bool "LLVM source-based coverage for hardware/QEMU targets"
         depends on !NATIVE_BUILD
-        depends on !DEMAND_PAGING
         depends on RISCV
+        depends on "$(TOOLCHAIN_VARIANT_COMPILER)" = "llvm"
         help
           Build with LLVM source-based coverage instrumentation
           (-fprofile-instr-generate -fcoverage-mapping) for bare-metal
           and QEMU targets using the clang/LLVM toolchain.
           Coverage data is dumped to serial in .profraw format and can
           be processed with llvm-profdata and llvm-cov on the host.
-          
-          Note: LLVM source-based coverage is incompatible with demand paging
-          because coverage counter updates must not trigger page faults during
-          early boot before the paging system is fully initialized.
           Currently only supported on RISC-V architecture.
 endchoice
 

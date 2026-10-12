@@ -1,6 +1,5 @@
 /*
  * Copyright (c) 2010-2014 Wind River Systems, Inc.
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

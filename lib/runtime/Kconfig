@@ -10,6 +10,7 @@ config COMPILER_RT_SUPPORTED
 
 choice RTLIB_IMPLEMENTATION
 	prompt "Runtime library implementation"
+	default COMPILER_RT_RTLIB if COVERAGE_LLVM_SOURCE
 	default LIBGCC_RTLIB
 
 config LIBGCC_RTLIB
