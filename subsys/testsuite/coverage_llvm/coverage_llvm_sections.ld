@@ -19,5 +19,6 @@
  * Placed via SECTIONS (snippets-sections.ld), which is outside all memory
  * GROUPs, after GROUP_END(RAMABLE_REGION).
  */
+. = ALIGN(8);
 SECTION_PROLOGUE(__llvm_covmap, 0,) { KEEP(*(__llvm_covmap)) }
 SECTION_PROLOGUE(__llvm_covfun, 0,) { KEEP(*(__llvm_covfun)) }
