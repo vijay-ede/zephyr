@@ -839,23 +839,30 @@ class LlvmSourceCov(CoverageTool):
             logger.error(f"merged.profdata not found at {profdata}")
             return 1, {}
 
-        # Collect all .a archives from build directories as coverage inputs.
-        # Object archives retain the COMDAT group structure needed by llvm-cov
-        # to map counters to source lines (the final ELF strips this info).
+        # Collect final ELF images from build directories as coverage inputs.
+        # Each image contains the coverage mapping for its linked image.
         search_dirs = build_dirs if build_dirs else [outdir]
-        archives = []
+        elfs = []
         for d in search_dirs:
-            archives.extend(str(p) for p in pathlib.Path(d).rglob("*.a"))
+            build_dir = pathlib.Path(d)
+            elf = build_dir / "zephyr" / "zephyr.elf"
+            if elf.is_file():
+                elfs.append(str(elf))
+            else:
+                elfs.extend(
+                    str(p) for p in build_dir.rglob("zephyr.elf")
+                    if p.parent.name == "zephyr"
+                )
 
-        if not archives:
-            logger.error("No .a archives found — cannot generate llvm-cov report")
+        if not elfs:
+            logger.error("No final ELF files found — cannot generate llvm-cov report")
             return 1, {}
 
-        # llvm-cov show/export takes the first archive as a positional argument
-        # and additional archives via -object flags.
+        # llvm-cov show/export takes the first ELF as a positional argument
+        # and additional ELFs via -object flags.
         # Passing multiple positional arguments treats them as source file filters.
-        first_archive = archives[0]
-        extra_archives = [f"-object={a}" for a in archives[1:]]
+        first_elf = elfs[0]
+        extra_elfs = [f"-object={elf}" for elf in elfs[1:]]
 
         coverage_dir = pathlib.Path(outdir) / "coverage"
         coverage_dir.mkdir(parents=True, exist_ok=True)
@@ -867,30 +874,30 @@ class LlvmSourceCov(CoverageTool):
                 out = coverage_dir / "html"
                 out.mkdir(parents=True, exist_ok=True)
                 cmd = ([self.llvm_cov, "show",
-                        first_archive,
+                        first_elf,
                         f"--instr-profile={profdata}",
                         "--format=html",
                         f"--output-dir={out}",
                         "--show-line-counts-or-regions"]
-                       + extra_archives + self.ignores)
+                       + extra_elfs + self.ignores)
                 results["html"] = str(out / "index.html")
             elif fmt == "lcov":
                 out = coverage_dir / "coverage.lcov"
                 cmd = ([self.llvm_cov, "export",
-                        first_archive,
+                        first_elf,
                         f"--instr-profile={profdata}",
                         "--format=lcov",
                         f"--output-file={out}"]
-                       + extra_archives + self.ignores)
+                       + extra_elfs + self.ignores)
                 results["lcov"] = str(out)
             elif fmt == "json":
                 out = coverage_dir / "coverage.json"
                 cmd = ([self.llvm_cov, "export",
-                        first_archive,
+                        first_elf,
                         f"--instr-profile={profdata}",
                         "--format=text",
                         f"--output-file={out}"]
-                       + extra_archives + self.ignores)
+                       + extra_elfs + self.ignores)
                 results["json"] = str(out)
             else:
                 logger.warning(f"Unsupported format for llvm-source-cov: {fmt}")
