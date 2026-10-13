@@ -156,4 +156,31 @@ function(compiler_set_linker_properties)
   string(REPLACE lib "" library_name ${library_basename})
 
   set_linker_property(PROPERTY rt_library "-l${library_name}")
+
+  if(CONFIG_COVERAGE_LLVM_SOURCE)
+    if(NOT CONFIG_COMPILER_RT_RTLIB)
+      message(FATAL_ERROR
+        "CONFIG_COVERAGE_LLVM_SOURCE requires CONFIG_COMPILER_RT_RTLIB=y."
+      )
+    endif()
+
+    # Zephyr links bare-metal images with -nostdlib, so Clang does not add
+    # its profiling runtime automatically. Query the compiler using the full
+    # active toolchain configuration to select the matching target multilib.
+    compiler_file_path(libclang_rt.profile.a coverage_profile_library)
+
+    if(NOT coverage_profile_library)
+      message(FATAL_ERROR
+        "CONFIG_COVERAGE_LLVM_SOURCE requires a matching "
+        "libclang_rt.profile.a compiler-rt multilib, but the selected "
+        "compiler could not locate one."
+      )
+    endif()
+
+    # arch/common/CMakeLists.txt consumes this property when constructing the
+    # final link. The profile archive is therefore linked after objects and
+    # before Zephyr's normal C and compiler runtime libraries.
+    set_property(TARGET linker APPEND PROPERTY coverage
+                 "${coverage_profile_library}")
+  endif()
 endfunction()

@@ -1,5 +1,3 @@
-# vim: set syntax=python ts=4 :
-#
 # Copyright (c) 2018-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
@@ -7,6 +5,7 @@ import collections
 import contextlib
 import filecmp
 import glob
+import html
 import json
 import logging
 import os
@@ -21,8 +20,9 @@ import time
 logger = logging.getLogger('twister')
 
 supported_coverage_formats = {
-    "gcovr": ["html", "xml", "csv", "txt", "coveralls", "sonarqube"],
-    "lcov":  ["html", "lcov"]
+    "gcovr":           ["html", "xml", "csv", "txt", "coveralls", "sonarqube"],
+    "lcov":            ["html", "lcov"],
+    "llvm-source-cov": ["html", "lcov", "json"],
 }
 
 
@@ -46,12 +46,18 @@ class CoverageTool:
             t =  Lcov(jobs)
         elif tool == 'gcovr':
             t =  Gcovr()
+        elif tool == 'llvm-source-cov':
+            t =  LlvmSourceCov()
         else:
             logger.error(f"Unsupported coverage tool specified: {tool}")
             return None
 
         logger.debug(f"Select {tool} as the coverage tool...")
         return t
+
+    def add_ignore_branch_pattern(self, pattern):
+        """Optionally configure backend-specific branch filtering."""
+        return
 
     @staticmethod
     def retrieve_gcov_data(input_file):
@@ -207,7 +213,10 @@ class CoverageTool:
                     ),
                     "sonarqube": "Sonarqube report generated: {}".format(
                         os.path.join(outdir, "coverage", "coverage.sonarqube.xml")
-                    )
+                    ),
+                    "json": "JSON report generated: {}".format(
+                        os.path.join(outdir, "coverage", "coverage.json")
+                    ),
                 }
                 # Per-instance reports are generated one per test instance and
                 # would flood the console, so log them at debug level and keep
@@ -215,7 +224,12 @@ class CoverageTool:
                 per_instance_report = self.coverage_capture and self.coverage_per_instance
                 log = logger.debug if per_instance_report else logger.info
                 for r in self.output_formats.split(','):
-                    log(report_log[r])
+                    r = r.strip()
+                    report_path = reports.get(r)
+                    if report_path:
+                        log(f"{r.upper()} report generated: {report_path}")
+                    else:
+                        log(report_log[r])
             else:
                 coverage_completed = False
         gcov_process_duration = time.time() - gcov_process_start
@@ -665,6 +679,468 @@ class Gcovr(CoverageTool):
             logger.error(f"GCOVR merge report stage failed with {ret}")
 
         return ret, { 'report': coverage_file, 'ztest': ztest_file, 'summary': coverage_summary }
+
+
+class LlvmSourceCov(CoverageTool):
+    """LLVM source-based coverage tool for bare-metal/QEMU targets.
+
+    Parses LLVM_PROFILE_DUMP_START/END hex dumps from handler.log,
+    reconstructs .profraw binary, merges with llvm-profdata, and
+    generates reports with llvm-cov. Requires CONFIG_COVERAGE_LLVM_SOURCE=y
+    in the firmware build.
+
+    LLVM coverage mappings are embedded in each ELF and are only compatible
+    with profile data produced by that ELF.  Reports are therefore generated
+    per Twister instance and aggregated only after llvm-cov has converted the
+    data to source-level artifacts.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.ignores = []
+        self.output_formats = "html"
+        self.llvm_cov = None
+        self.llvm_profdata = None
+        self._resolve_tools()
+
+    def _resolve_tools(self):
+        """Resolve llvm-cov and llvm-profdata from LLVM_TOOLCHAIN_PATH or PATH."""
+        llvm_path = os.environ.get("LLVM_TOOLCHAIN_PATH")
+        bin_dir = os.path.join(llvm_path, "bin") if llvm_path else None
+        self.llvm_cov = shutil.which("llvm-cov", path=bin_dir) or shutil.which("llvm-cov")
+        self.llvm_profdata = (shutil.which("llvm-profdata", path=bin_dir)
+                              or shutil.which("llvm-profdata"))
+        if not self.llvm_cov or not self.llvm_profdata:
+            logger.error(
+                "llvm-cov or llvm-profdata not found. "
+                "Set LLVM_TOOLCHAIN_PATH or add them to PATH.")
+
+    def get_version(self):
+        if not self.llvm_cov:
+            return None
+        try:
+            result = subprocess.run(
+                [self.llvm_cov, "--version"],
+                capture_output=True, text=True, check=True)
+            return result.stdout.strip().splitlines()[0]
+        except Exception:
+            return None
+
+    def add_ignore_file(self, pattern):
+        self.ignores.append(f"--ignore-filename-regex={pattern}")
+
+    def add_ignore_directory(self, pattern):
+        # Do not ignore 'samples' or 'tests' directories for llvm-source-cov.
+        # Unlike gcovr which filters the report, llvm-cov --ignore-filename-regex
+        # excludes source files entirely. Since tests and samples ARE the code
+        # under test, excluding them would produce an empty report.
+        # Only ignore generated files (build artifacts).
+        if pattern not in ('samples', 'tests'):
+            self.ignores.append(f"--ignore-filename-regex=.*/{pattern}/.*")
+
+    @staticmethod
+    def retrieve_profraw_data(input_file):
+        """Parse LLVM_PROFILE_DUMP_START/END markers from handler.log.
+
+        Returns dict with 'complete' bool and 'data' hex string or None.
+        The hex data may span multiple lines (chunked output from firmware
+        to allow readline() to complete within the timeout window).
+        """
+        logger.debug(f"Parsing LLVM profile data from {input_file}")
+        hex_chunks = []
+        capture = False
+        complete = False
+        with open(input_file) as fp:
+            for line in fp.readlines():
+                if "LLVM_PROFILE_DUMP_START" in line:
+                    capture = True
+                    continue
+                if "LLVM_PROFILE_DUMP_END" in line:
+                    complete = True
+                    break
+                if capture:
+                    chunk = line.strip()
+                    if chunk:
+                        hex_chunks.append(chunk)
+        if not complete:
+            logger.warning(f"Incomplete LLVM profile data in {input_file}")
+        hex_data = ''.join(hex_chunks) if hex_chunks else None
+        return {"complete": complete, "data": hex_data}
+
+    def capture_data(self, outdir):
+        """Override: parse .profraw hex from handler.log files,
+        write .profraw binaries, merge with llvm-profdata."""
+        profraw_files = []
+        for handler_log in pathlib.Path(outdir).rglob("handler.log"):
+            result = self.retrieve_profraw_data(handler_log)
+            if not result["complete"] or not result["data"]:
+                logger.warning(f"No usable LLVM profile data in {handler_log}")
+                continue
+            profraw_path = handler_log.parent / "default.profraw"
+            try:
+                with open(profraw_path, 'wb') as f:
+                    f.write(bytes.fromhex(result["data"]))
+                profraw_files.append(str(profraw_path))
+                logger.debug(f"Written: {profraw_path}")
+            except ValueError as e:
+                logger.error(f"Failed to decode hex data from {handler_log}: {e}")
+
+        if not profraw_files:
+            logger.error("No .profraw files generated — no LLVM coverage data found")
+            return
+
+        coverage_dir = pathlib.Path(outdir) / "coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        merged = coverage_dir / "merged.profdata"
+
+        cmd = ([self.llvm_profdata, "merge", "-sparse",
+                "-o", str(merged)] + profraw_files)
+        logger.debug(f"Running: {' '.join(cmd)}")
+        ret = subprocess.call(cmd)
+        if ret:
+            logger.error(f"llvm-profdata merge failed with {ret}")
+        else:
+            logger.debug(f"Merged profdata: {merged}")
+
+    @staticmethod
+    def _instance_artifacts(search_roots):
+        """Return (instance name, ELF, profdata) tuples.
+
+        A coverage profile is paired with the ELF in the same Twister build
+        directory.  Searching by the coverage directory, rather than
+        collecting all files independently, prevents cross-configuration
+        profile/mapping mismatches.
+        """
+        artifacts = []
+        seen = set()
+        for root in search_roots:
+            root = pathlib.Path(root)
+            for profdata in root.rglob("merged.profdata"):
+                if profdata.parent.name != "coverage":
+                    continue
+                build_dir = profdata.parent.parent
+                elf = build_dir / "zephyr" / "zephyr.elf"
+                if not elf.is_file():
+                    continue
+                key = (str(elf), str(profdata))
+                if key in seen:
+                    continue
+                seen.add(key)
+                artifacts.append((build_dir.name, elf, profdata))
+        return sorted(artifacts, key=lambda item: str(item[1]))
+
+    def _generate_instance(self, name, elf, profdata, output_dir,
+                           formats, coveragelog):
+        """Generate reports for one matching ELF/profile pair."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        result = {"name": name, "elf": str(elf), "profdata": str(profdata)}
+
+        for fmt in formats:
+            if fmt == "html":
+                out = output_dir / "html"
+                out.mkdir(parents=True, exist_ok=True)
+                cmd = [self.llvm_cov, "show", str(elf),
+                       f"--instr-profile={profdata}", "--format=html",
+                       f"--output-dir={out}", "--show-line-counts-or-regions"]
+                result[fmt] = str(out / "index.html")
+            elif fmt == "lcov":
+                out = output_dir / "coverage.lcov"
+                cmd = [self.llvm_cov, "export", str(elf),
+                       f"--instr-profile={profdata}", "--format=lcov"]
+                result[fmt] = str(out)
+            else:
+                logger.warning(f"Unsupported format for llvm-source-cov: {fmt}")
+                continue
+
+            cmd += self.ignores
+            logger.debug(f"Running: {' '.join(cmd)}")
+            if fmt == "lcov":
+                with open(result[fmt], "w", encoding="utf-8") as output:
+                    ret = subprocess.call(cmd, stdout=output, stderr=coveragelog)
+            else:
+                ret = subprocess.call(cmd, stdout=coveragelog, stderr=coveragelog)
+            if ret:
+                logger.error(f"llvm-cov {fmt} report failed for {name} with {ret}")
+                result.pop(fmt, None)
+        # Always collect machine-readable totals so HTML-only runs can still
+        # present an aggregate summary in the top-level index.
+        summary = output_dir / ("coverage.json" if "json" in formats
+                                else "summary.json")
+        cmd = [self.llvm_cov, "export", str(elf),
+               f"--instr-profile={profdata}", "--format=text"] + self.ignores
+        logger.debug(f"Running: {' '.join(cmd)}")
+        with open(summary, "w", encoding="utf-8") as output:
+            ret = subprocess.call(cmd, stdout=output, stderr=coveragelog)
+        if ret:
+            logger.error(f"llvm-cov summary report failed for {name} with {ret}")
+        else:
+            result["_summary"] = str(summary)
+            if "json" in formats:
+                result["json"] = str(summary)
+        return result
+
+    @staticmethod
+    def _is_generated_source(filename):
+        """Return whether a coverage source path belongs to generated output."""
+        return any(part in ("generated", "twister-out")
+                   for part in pathlib.Path(filename).parts)
+
+    @staticmethod
+    def _function_variant_key(function):
+        """Build a stable identity for one source-level function variant."""
+        regions = tuple(
+            tuple(region[:4]) + tuple(region[5:])
+            for region in function.get("regions", [])
+            if len(region) >= 5
+        )
+        branches = tuple(
+            tuple(branch[:4]) + tuple(branch[6:])
+            for branch in function.get("branches", [])
+            if len(branch) >= 6
+        )
+        return function.get("name", ""), regions, branches
+
+    @staticmethod
+    def _aggregate_summaries(reports):
+        """Union source lines and stable function variants across configurations."""
+        file_entities = {}
+        files = {}
+        file_summaries = {}
+        report_count = 0
+
+        def add_entity(filename, metric, key, covered):
+            if not filename or LlvmSourceCov._is_generated_source(filename):
+                return
+            files.setdefault(filename, {})
+            entities = file_entities.setdefault(filename, {}).setdefault(metric, {})
+            entities[key] = entities.get(key, False) or covered
+
+        for report in reports:
+            path = report.get("_summary")
+            if not path or not os.path.exists(path):
+                continue
+            try:
+                with open(path, encoding="utf-8") as fp:
+                    data = json.load(fp).get("data", [])
+                instance = data[0] if data else {}
+            except (OSError, ValueError, IndexError):
+                continue
+            report_count += 1
+            for source_file in instance.get("files", []):
+                filename = source_file.get("filename")
+                if not filename or LlvmSourceCov._is_generated_source(filename):
+                    continue
+                files.setdefault(filename, {})
+                file_summaries.setdefault(filename, {})
+                for metric, values in source_file.get("summary", {}).items():
+                    previous = file_summaries[filename].setdefault(
+                        metric, {"count": 0, "covered": 0})
+                    # Region and branch totals are still mapping-dependent;
+                    # retain the largest mapping until stable identities for
+                    # those entities are defined.
+                    previous["count"] = max(previous["count"], values.get("count", 0))
+                    previous["covered"] = max(previous["covered"],
+                                               values.get("covered", 0))
+
+                # LLVM segments provide source-line locations and execution
+                # counts.  A line is covered if any configuration covers it.
+                for segment in source_file.get("segments", []):
+                    if len(segment) >= 4 and segment[3] and segment[0] > 0:
+                        add_entity(filename, "lines", (segment[0],), segment[2] > 0)
+
+                # Branch records are keyed by source location and occurrence.
+                # The true/false counts are the fifth and sixth fields in the
+                # LLVM JSON branch record.
+                for branch_index, branch in enumerate(source_file.get("branches", [])):
+                    if len(branch) >= 6:
+                        key = (tuple(branch[:4]), branch_index)
+                        add_entity(filename, "branches", key,
+                                   branch[4] > 0 or branch[5] > 0)
+
+            # Function and region records carry the source filename themselves.
+            for function in instance.get("functions", []):
+                filenames = function.get("filenames", [])
+                filename = filenames[0] if filenames else None
+                regions = function.get("regions", [])
+                add_entity(filename, "functions",
+                           LlvmSourceCov._function_variant_key(function),
+                           function.get("count", 0) > 0)
+                for region_index, region in enumerate(regions):
+                    if len(region) >= 5:
+                        add_entity(filename, "regions",
+                                   (tuple(region[:4]), region_index),
+                                   region[4] > 0)
+
+        totals = {metric: {"count": 0, "covered": 0}
+                  for metric in ("functions", "lines", "regions", "branches")}
+        for filename, entities in file_entities.items():
+            file_totals = files.setdefault(filename, {})
+            for metric in totals:
+                if metric in ("functions", "lines"):
+                    values = entities.get(metric, {})
+                    aggregate = {"count": len(values),
+                                 "covered": sum(values.values())}
+                else:
+                    aggregate = file_summaries.get(filename, {}).get(
+                        metric, {"count": 0, "covered": 0}).copy()
+                aggregate["percent"] = (100.0 * aggregate["covered"] /
+                                         aggregate["count"]
+                                         if aggregate["count"] else 0.0)
+                file_totals[metric] = aggregate
+                totals[metric]["count"] += aggregate["count"]
+                totals[metric]["covered"] += aggregate["covered"]
+        for values in totals.values():
+            values["percent"] = (100.0 * values["covered"] / values["count"]
+                                  if values["count"] else 0.0)
+        return {"configurations": report_count, "totals": totals,
+                "files": files,
+                "aggregation": "union of source lines and stable function variants; "
+                "largest per-file LLVM mapping for regions and branches"}
+
+    @staticmethod
+    def _format_metric(values):
+        return "{}/{} ({:.2f}%)".format(values.get("covered", 0),
+                                        values.get("count", 0),
+                                        values.get("percent", 0.0))
+
+    @staticmethod
+    def _coverage_class(values):
+        percent = values.get("percent", 0.0)
+        if values.get("count", 0) == 0:
+            return "coverage-na"
+        if percent >= 80:
+            return "coverage-good"
+        if percent >= 50:
+            return "coverage-medium"
+        if percent > 0:
+            return "coverage-low"
+        return "coverage-none"
+
+    def _write_html_index(self, index, reports, aggregate):
+        """Write aggregate totals and links to isolated LLVM reports."""
+        metric_rows = []
+        for metric in ("functions", "lines", "regions", "branches"):
+            values = aggregate["totals"].get(metric)
+            if values:
+                metric_rows.append(
+                    f'<tr><td>{metric.title()}</td><td class="{self._coverage_class(values)}">'
+                    f"{self._format_metric(values)}</td></tr>")
+        file_rows = []
+        base_dir = pathlib.Path(self.base_dir).resolve() if self.base_dir else None
+        for filename, file_totals in sorted(aggregate.get("files", {}).items()):
+            display_name = filename
+            if base_dir:
+                try:
+                    display_name = str(pathlib.Path(filename).resolve().relative_to(base_dir))
+                except ValueError:
+                    pass
+            file_rows.append(
+                "<tr><td>{}</td>{}</tr>".format(
+                    html.escape(display_name),
+                    "".join(
+                        '<td class="{}">{}</td>'.format(
+                            self._coverage_class(file_totals.get(metric, {})),
+                            html.escape(self._format_metric(file_totals.get(metric, {}))))
+                        for metric in ("functions", "lines", "regions", "branches"))))
+        rows = []
+        for report in reports:
+            report_path = report.get("html")
+            if not report_path:
+                continue
+            rel = os.path.relpath(report_path, index.parent)
+            rows.append(f'<tr><td>{html.escape(report["name"])}</td>'
+                        f'<td><a href="{html.escape(rel)}">HTML report</a></td></tr>')
+        index.write_text(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>"
+            "LLVM coverage reports</title><style>"
+            "body{font-family:sans-serif;margin:2em}"
+            "table{border-collapse:collapse;margin:1em 0;width:100%}"
+            "th,td{border:1px solid #ccc;padding:5px;text-align:left}"
+            "th{background:#eee}.coverage-good{background:#b7e1cd}"
+            ".coverage-medium{background:#fff2cc}.coverage-low{background:#fce5cd}"
+            ".coverage-none{background:#f4cccc}.coverage-na{background:#e6e6e6}"
+            "</style></head><body>"
+            "<h1>LLVM coverage aggregate</h1>"
+            f"<p>Reports with coverage data: {aggregate['configurations']}</p>"
+            "<p>The totals below union source lines and stable function variants "
+            "across configurations. Region and branch totals use the largest "
+            "LLVM mapping seen for each source file.</p>"
+            "<table><tr><th>Metric</th><th>Covered</th></tr>"
+            + "".join(metric_rows) + "</table>"
+            "<h2>Coverage by source file</h2>"
+            "<table><tr><th>Source file</th><th>Functions</th>"
+            "<th>Lines</th><th>Regions</th><th>Branches</th></tr>"
+            + "".join(file_rows) + "</table>"
+            "<h2>Reports by test configuration</h2>"
+            "<p>Each report uses the ELF and profile data from the same "
+            "Twister configuration.</p><table><tr><th>Configuration</th>"
+            "<th>Report</th></tr>" + "".join(rows) +
+            "</table></body></html>\n",
+            encoding="utf-8")
+
+    def _generate(self, outdir, coveragelog, build_dirs=None):
+        """Generate reports without combining incompatible LLVM mappings."""
+        coverage_dir = pathlib.Path(outdir) / "coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        search_roots = build_dirs if build_dirs else [outdir]
+        artifacts = self._instance_artifacts(search_roots)
+        if not artifacts:
+            logger.error("No matching ELF/profile pairs found — cannot generate llvm-cov report")
+            return 1, {}
+
+        formats = [fmt.strip() for fmt in self.output_formats.split(",")]
+        reports = []
+        for index, (name, elf, profdata) in enumerate(artifacts):
+            relative = pathlib.Path(os.path.relpath(elf.parent.parent, outdir))
+            safe_name = sanitize_coverage_name("{}_{}".format(index, relative))
+            instance_dir = coverage_dir / "instances" / safe_name
+            report = self._generate_instance(name, elf, profdata, instance_dir,
+                                              formats, coveragelog)
+            report["name"] = str(relative)
+            reports.append(report)
+
+        aggregate = self._aggregate_summaries(reports)
+        summary_path = coverage_dir / "summary.json"
+        summary_path.write_text(json.dumps(aggregate, indent=2) + "\n",
+                                encoding="utf-8")
+
+        aggregate_json = coverage_dir / "coverage.json"
+        json_reports = []
+        for report in reports:
+            path = report.get("json")
+            if path and os.path.exists(path):
+                with open(path, encoding="utf-8") as fp:
+                    json_reports.extend(json.load(fp).get("data", []))
+        if "json" in formats:
+            aggregate_json.write_text(json.dumps({
+                "type": "llvm.coverage.json.export",
+                "version": "1.0",
+                "data": json_reports,
+                "instances": reports,
+            }, indent=2) + "\n", encoding="utf-8")
+
+        results = {}
+        if "html" in formats:
+            index = coverage_dir / "html" / "index.html"
+            index.parent.mkdir(parents=True, exist_ok=True)
+            self._write_html_index(index, reports, aggregate)
+            results["html"] = str(index)
+        results["summary"] = str(summary_path)
+        if "json" in formats:
+            results["json"] = str(aggregate_json)
+        if "lcov" in formats:
+            lcov = coverage_dir / "coverage.lcov"
+            with open(lcov, "w", encoding="utf-8") as output:
+                for report in reports:
+                    path = report.get("lcov")
+                    if path and os.path.exists(path):
+                        with open(path, encoding="utf-8") as input_file:
+                            shutil.copyfileobj(input_file, output)
+            results["lcov"] = str(lcov)
+
+        for fmt, path in results.items():
+            logger.info(f"LLVM coverage {fmt} report: {path}")
+        return 0, results
 
 def sanitize_coverage_name(name):
     """Make a coverage test name safe to use as a filename component."""
@@ -1130,8 +1606,10 @@ def run_coverage_tool(options, outdir, is_system_gcov, instances,
     if not coverage_tool:
         return False, {}
 
-    coverage_tool.gcov_tool = str(choose_gcov_tool(options, is_system_gcov, instances))
-    logger.debug(f"Using gcov tool: {coverage_tool.gcov_tool}")
+    coverage_tool.gcov_tool = str(choose_gcov_tool(options, is_system_gcov, instances)) \
+        if options.coverage_tool != 'llvm-source-cov' else None
+    if coverage_tool.gcov_tool:
+        logger.debug(f"Using gcov tool: {coverage_tool.gcov_tool}")
 
     coverage_tool.instances = instances
     coverage_tool.coverage_per_instance = options.coverage_per_instance
@@ -1143,12 +1621,13 @@ def run_coverage_tool(options, outdir, is_system_gcov, instances,
     if options.coverage_formats is not None:
         coverage_tool.output_formats = options.coverage_formats
     coverage_tool.add_ignore_file('generated')
+    coverage_tool.add_ignore_directory('twister-out')
     coverage_tool.add_ignore_directory('tests')
     coverage_tool.add_ignore_directory('samples')
-    # Ignore branch coverage on LOG_* and LOG_HEXDUMP_* macros
+    # Backends that support branch filtering ignore LOG_* and LOG_HEXDUMP_* macros.
     # Branch misses are due to the implementation of Z_LOG2 and cannot be avoided
     coverage_tool.add_ignore_branch_pattern(r"^\s*LOG_(?:HEXDUMP_)?(?:DBG|INF|WRN|ERR)\(.*")
-    # Ignore branch coverage on __ASSERT* macros
+    # Backends that support branch filtering also ignore __ASSERT* macros.
     # Covering the failing case is not desirable as it will immediately terminate the test.
     coverage_tool.add_ignore_branch_pattern(r"^\s*__ASSERT(?:_EVAL|_NO_MSG|_POST_ACTION)?\(.*")
     return coverage_tool.generate(outdir)

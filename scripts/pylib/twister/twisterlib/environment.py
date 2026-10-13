@@ -17,7 +17,8 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Generator
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -512,8 +513,11 @@ structure in the main Zephyr tree: boards/<vendor>/<board_name>/""")
                          "This option may be used multiple times. "
                          "Default to what was selected with --platform.")
 
-    coverage_group.add_argument("--coverage-tool", choices=['lcov', 'gcovr'], default='gcovr',
-                    help="Tool to use to generate coverage reports (%(default)s - default).")
+    coverage_group.add_argument("--coverage-tool",
+                    choices=['lcov', 'gcovr', 'llvm-source-cov'], default='gcovr',
+                    help="Tool to use to generate coverage reports (%(default)s - default). "
+                         "Use 'llvm-source-cov' for LLVM source-based coverage with "
+                         "CONFIG_COVERAGE_LLVM_SOURCE=y.")
 
     coverage_group.add_argument("--coverage-formats", action="store", default=None,
                     help="Output formats to use for generated coverage reports " +
@@ -521,7 +525,9 @@ structure in the main Zephyr tree: boards/<vendor>/<board_name>/""")
                          "Valid options for 'gcovr' tool are: " +
                          ','.join(supported_coverage_formats['gcovr']) + " (html - default)." +
                          " Valid options for 'lcov' tool are: " +
-                         ','.join(supported_coverage_formats['lcov']) + " (html,lcov - default).")
+                         ','.join(supported_coverage_formats['lcov']) + " (html,lcov - default)." +
+                         " Valid options for 'llvm-source-cov' tool are: " +
+                         ','.join(supported_coverage_formats['llvm-source-cov']) + " (html - default).")
 
     coverage_group.add_argument("--coverage-per-instance", action="store_true", default=False,
                 help="""Compose individual coverage reports for each test suite

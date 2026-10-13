@@ -360,7 +360,8 @@ class TestInstance(StatusMixin):
         enable_ubsan=False,
         enable_coverage=False,
         coverage_platform=None,
-        coverage_per_test=False
+        coverage_per_test=False,
+        coverage_tool=None
     ):
         if coverage_platform is None:
             coverage_platform = []
@@ -411,6 +412,9 @@ class TestInstance(StatusMixin):
             for cp in coverage_platform:
                 if cp in platform.aliases:
                     content = content + "\nCONFIG_COVERAGE=y"
+                    # Set LLVM source-based coverage if llvm-source-cov tool is selected
+                    if coverage_tool == 'llvm-source-cov':
+                        content = content + "\nCONFIG_COVERAGE_LLVM_SOURCE=y"
                     if coverage_per_test:
                         content = content + "\nCONFIG_ZTEST_COVERAGE_PER_TEST=y"
                         if self.platform_supports_semihost(platform):

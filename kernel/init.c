@@ -35,6 +35,7 @@
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/tracing/tracing.h>
 #include <zephyr/debug/gcov.h>
+#include <zephyr/debug/llvm_coverage.h>
 #include <kswap.h>
 #include <zephyr/timing/timing.h>
 #include <zephyr/logging/log.h>
@@ -353,6 +354,9 @@ static void bg_thread_main(void *unused1, void *unused2, void *unused3)
 	gcov_coverage_dump();
 #elif defined(CONFIG_COVERAGE_SEMIHOST)
 	gcov_coverage_semihost();
+#elif defined(CONFIG_COVERAGE_LLVM_SOURCE)
+	/* Dump LLVM source-based coverage data once main() has exited. */
+	llvm_coverage_dump();
 #endif /* CONFIG_COVERAGE_DUMP */
 } /* LCOV_EXCL_LINE ... because we just dumped final coverage data */
 
